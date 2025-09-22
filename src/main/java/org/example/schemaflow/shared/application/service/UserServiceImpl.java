@@ -38,7 +38,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public User save(User user) {
+    public UserDTO save(User user) {
 
         Optional<Role> optionalRoleUser = roleRepository.findByName(RoleName.ROLE_USER);
         List<Role> roles = new ArrayList<>();
@@ -52,7 +52,7 @@ public class UserServiceImpl implements UserService {
 
         user.setRoles(roles);
         user.setPassword(passwordEncoder.encode(user.getPassword()));
-        return repository.save(user);
+        return userMapper.toDto(repository.save(user));
     }
 
     @Override
