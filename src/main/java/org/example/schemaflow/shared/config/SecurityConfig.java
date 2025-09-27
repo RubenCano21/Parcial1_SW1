@@ -48,12 +48,15 @@ public class SecurityConfig {
 
         return http
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("api/auth/**").permitAll()
+                        .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/users/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/users/**").permitAll()
                         .requestMatchers(HttpMethod.PUT, "/api/users/**").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/users/**").permitAll()
                         .requestMatchers( "/api/roles/**").permitAll()
+                        .requestMatchers("/api/generator").permitAll()
+                        .requestMatchers("/api/generator/v1").permitAll()
+                        .anyRequest().authenticated()
                 )
                 .addFilter(jwtAuthFilter)
                 .addFilterBefore(new JwtValidationFilter(authenticationManager()), UsernamePasswordAuthenticationFilter.class)
