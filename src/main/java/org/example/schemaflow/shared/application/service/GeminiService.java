@@ -25,6 +25,7 @@ public class GeminiService {
     @Value("${api.gemini.key}")
     private String apiKey;
 
+    private final ERDParserService erdParserService;
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -32,150 +33,139 @@ public class GeminiService {
         try {
             log.info("Generating code from ERD JSON using Gemini API");
 
-            String promptText = """
-                    Eres un experto generador de código Spring Boot. A partir del siguiente JSON de un diagrama ER, genera ÚNICAMENTE el código Java.
-                    
-                    ERD JSON:
-                    %s
-                    
-                    INSTRUCCIONES IMPORTANTES:
-                    1. Genera código Spring Boot 3.2+ con Java 17
-                    2. Usa estas dependencias: JPA, Lombok, MapStruct, Spring Web, Validation
-                    3. Paquete base: com.example.project
-                    4. Para cada entidad genera:
-                       - Entity.java (JPA con @Entity, @Table, @Id, @GeneratedValue, etc.)
-                       - Dto.java (clases DTO simples con Lombok)
-                       - Repository.java (interface que extiende JpaRepository)
-                       - Service.java (interface del servicio)
-                       - ServiceImpl.java (implementación del servicio con @Service)
-                       - Controller.java (REST controller con @RestController, @RequestMapping)
-                       - Mapper.java (MapStruct interface con @Mapper)
-                    
-                    FORMATO DE RESPUESTA REQUERIDO:
-                    Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
-                    {
-                      "EntityName.java": "package com.example.project.entity;// código de la entidad...",
-                      "EntityNameDto.java": "package com.example.project.dto;// código del DTO...",
-                      "EntityNameRepository.java": "package com.example.project.repository;// código del repository...",
-                      "EntityNameService.java": "package com.example.project.service;// código del service...",
-                      "EntityNameServiceImpl.java": "package com.example.project.service.impl;// código del serviceImpl...",
-                      "EntityNameController.java": "package com.example.project.controller;// código del controller...",
-                      "EntityNameMapper.java": "package com.example.project.mapper;// código del mapper..."
-                    }
-                    
-                    REGLAS CRÍTICAS:
-                    - Las claves del JSON deben ser SOLO el nombre del archivo (ejemplo: "User.java", NO "com/example/User.java")
-                    - Cada código debe empezar con el package correcto
-                    - Usa @Data, @NoArgsConstructor, @AllArgsConstructor para entidades
-                    - Usa @RestController, @RequestMapping, @GetMapping, @PostMapping, etc.
-                    - Usa @Service, @RequiredArgsConstructor para servicios
-                    - Usa @Repository para repositorios (opcional, pero buena práctica)
-                    - Usa @Mapper(componentModel = "spring") para MapStruct
-                    - NO incluyas explicaciones, comentarios extra o texto fuera del JSON
-                    - NO uses markdown code blocks (```json), solo devuelve el JSON puro
-                    
-                    EJEMPLO ESPERADO para una entidad "User":
-                    {
-                      "User.java": "
-                      package com.example.project.entity;
-                      import jakarta.persistence.*;
-                      import lombok.Data;
-                      
-                      @Entity
-                      @Table(name = "users")
-                      @Data
-                      public class User {    
-                            @Id
-                            @GeneratedValue(strategy = GenerationType.IDENTITY)
-                            private Long id;
-                            private String name;
-                      }",
-                      
-                      "UserDto.java": "
-                      package com.example.project.dto;
-                      
-                      import lombok.Data;
-                      
-                      @Data
-                      public class UserDto {
-                            private Long id;
-                            private String name;
-                      }"
-                    }
-                    """.formatted(erdJson);
 
-            Map<String, Object> body = Map.of(
-                    "contents", List.of(
-                            Map.of(
-                                    "parts", List.of(
-                                            Map.of("text", promptText)
-                                    )
-                            )
-                    ),
-                    "generationConfig", Map.of(
-                            "temperature", 0.1,
-                            "maxOutputTokens", 8192,
-                            "candidateCount", 1
-                    )
-            );
+            // PASO 1: Parsear el JSON del diagrama ER a un prompt estructurado
+            String structuredPrompt = erdParserService.parseERDToStructuredPrompt(erdJson);
+            log.debug("Structured Prompt created, length {}", structuredPrompt.length());
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
+            // PASO 2: Construir el prompt completo para Gemini
+            String fullPrompt = buildGeminiPrompt(structuredPrompt);
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            // PASO 3: Llamar a la API de Gemini
+            Map<String, String> generatedFiles = callGeminiAPI(fullPrompt);
 
-            String fullUrl = apiUrl + "?key=" + apiKey;
-            log.debug("Calling Gemini API: {}", fullUrl);
+            // PASO 4: Procesar y limpiar los archivos generados
+            Map<String, String> cleanedFiles = cleanAndProcessFiles(generatedFiles);
 
-            ResponseEntity<String> response = restTemplate.exchange(
-                    fullUrl,
-                    HttpMethod.POST,
-                    request,
-                    String.class
-            );
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new RuntimeException("Gemini API returned error: " + response.getStatusCode());
-            }
-
-            JsonNode responseJson = objectMapper.readTree(response.getBody());
-            JsonNode candidatesNode = responseJson.get("candidates");
-
-            if (candidatesNode != null && !candidatesNode.isEmpty()) {
-                JsonNode contentNode = candidatesNode.get(0).get("content");
-                if (contentNode != null) {
-                    JsonNode partsNode = contentNode.get("parts");
-                    if (partsNode != null && !partsNode.isEmpty()) {
-                        String generatedText = partsNode.get(0).get("text").asText();
-                        log.debug("Raw Gemini response length: {}", generatedText.length());
-
-                        String jsonContent = extractJsonFromResponse(generatedText);
-                        log.debug("Extracted JSON length: {}", jsonContent.length());
-
-                        Map<String, String> generatedFiles = objectMapper.readValue(jsonContent, new TypeReference<Map<String, String>>() {});
-
-                        // CRÍTICO: Limpiar las claves para asegurar que solo sean nombres de archivos
-                        Map<String, String> cleanedFiles = cleanFileNames(generatedFiles);
-
-                        log.info("Successfully generated {} files", cleanedFiles.size());
-                        cleanedFiles.keySet().forEach(filename -> log.debug("Generated file: {}", filename));
-
-                        return cleanedFiles;
-                    }
-                }
-            }
-
-            throw new RuntimeException("No valid response received from Gemini API");
+            log.info("Successfully generated {} files", cleanedFiles.size());
+            cleanedFiles.keySet().forEach(filename -> log.debug("Generated file: {}", filename));
+            return cleanedFiles;
 
         } catch (Exception e) {
-            log.error("Error calling Gemini API", e);
-            throw new RuntimeException("Error generating code with Gemini: " + e.getMessage(), e);
+            log.error("Error generating code with Gemini", e);
+            throw new RuntimeException("Failed to generate code with Gemini: " + e.getMessage(), e);
         }
+    }
+
+    private String buildGeminiPrompt(String structuredData) {
+        return String.format("""
+                Eres un experto desarrollador Spring Boot. Basándote en la siguiente información estructurada de un diagrama ER, 
+                genera el código Java completo para un proyecto Spring Boot 3.2+ con Java 17.
+                
+                INFORMACIÓN DEL DIAGRAMA:
+                %s
+                
+                REGLAS DE GENERACIÓN:
+                1. Paquete base: com.example.project
+                2. Usar Spring Boot 3.2+ con Jakarta EE
+                3. Implementar todas las capas: Entity, DTO, Repository, Service, Controller, Mapper
+                4. Usar Lombok para reducir boilerplate (@Data, @NoArgsConstructor, @AllArgsConstructor, @Builder)
+                5. Usar MapStruct para mappers (@Mapper(componentModel = "spring"))
+                6. Implementar relaciones JPA correctamente
+                7. Usar validaciones Jakarta Bean Validation (@NotNull, @Size, @Valid)
+                8. Crear DTOs sin referencias circulares
+                9. Implementar operaciones CRUD completas
+                10. Usar ResponseEntity en controllers
+                11. Manejar errores apropiadamente
+                
+                ESTRUCTURA DE ARCHIVOS A GENERAR:
+                Para cada entidad generar:
+                - [Entity].java en package com.example.project.entity
+                - [Entity]Dto.java en package com.example.project.dto  
+                - [Entity]Repository.java en package com.example.project.repository
+                - [Entity]Service.java en package com.example.project.service
+                - [Entity]ServiceImpl.java en package com.example.project.service.impl
+                - [Entity]Controller.java en package com.example.project.controller
+                - [Entity]Mapper.java en package com.example.project.mapper
+                
+                FORMATO DE RESPUESTA REQUERIDO:
+                Devuelve ÚNICAMENTE un JSON válido sin markdown con esta estructura:
+                {
+                  "Alumno.java": "package com.example.project.entity;\\n\\nimport jakarta.persistence.*;\\nimport lombok.Data;\\n\\n@Entity\\n@Table(name = \\"alumnos\\")\\n@Data\\npublic class Alumno {\\n    @Id\\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\\n    private Long id;\\n    private String nombre;\\n}",
+                  "AlumnoDto.java": "package com.example.project.dto;\\n\\nimport lombok.Data;\\n\\n@Data\\npublic class AlumnoDto {\\n    private Long id;\\n    private String nombre;\\n}"
+                }
+                
+                IMPORTANTE:
+                - Las claves deben ser SOLO el nombre del archivo (ejemplo: "Alumno.java", NO rutas)
+                - Usar \\n para saltos de línea en el contenido
+                - No incluir explicaciones, solo el JSON
+                - No usar bloques de código markdown
+                - Asegurar que todos los imports sean correctos
+                - Implementar las relaciones JPA según las cardinalidades especificadas
+                """, structuredData);
+    }
+
+    private Map<String, String> callGeminiAPI(String prompt) throws Exception {
+        Map<String, Object> body = Map.of(
+                "contents", List.of(
+                        Map.of(
+                                "parts", List.of(
+                                        Map.of("text", prompt)
+                                )
+                        )
+                ),
+                "generationConfig", Map.of(
+                        "temperature", 0.1,
+                        "maxOutputTokens", 8192,
+                        "candidateCount", 1
+                )
+        );
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+        String fullUrl = apiUrl + "?key=" + apiKey;
+        log.debug("Calling Gemini API: {}", fullUrl);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                fullUrl,
+                HttpMethod.POST,
+                request,
+                String.class
+        );
+
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new RuntimeException("Gemini API returned error: " + response.getStatusCode());
+        }
+
+        // Parsear la respuesta
+        JsonNode responseJson = objectMapper.readTree(response.getBody());
+        JsonNode candidatesNode = responseJson.get("candidates");
+
+        if (candidatesNode != null && !candidatesNode.isEmpty()) {
+            JsonNode contentNode = candidatesNode.get(0).get("content");
+            if (contentNode != null) {
+                JsonNode partsNode = contentNode.get("parts");
+                if (partsNode != null && !partsNode.isEmpty()) {
+                    String generatedText = partsNode.get(0).get("text").asText();
+                    log.debug("Raw Gemini response length: {}", generatedText.length());
+
+                    // Extraer y parsear el JSON
+                    String jsonContent = extractJsonFromResponse(generatedText);
+                    return objectMapper.readValue(jsonContent, new TypeReference<Map<String, String>>() {});
+                }
+            }
+        }
+
+        throw new RuntimeException("No valid response received from Gemini API");
     }
 
     private String extractJsonFromResponse(String response) {
         String cleaned = response.trim();
-        log.debug("Extracting JSON from response: {}", cleaned.substring(0, Math.min(200, cleaned.length())));
+        log.debug("Extracting JSON from response (first 200 chars): {}",
+                cleaned.substring(0, Math.min(200, cleaned.length())));
 
         // Remover bloques de código markdown si existen
         cleaned = cleaned.replaceAll("```json\\s*", "").replaceAll("```\\s*$", "");
@@ -194,11 +184,8 @@ public class GeminiService {
         return cleaned;
     }
 
-    /**
-     * MÉTODO CRÍTICO: Limpia los nombres de archivos para evitar rutas duplicadas
-     */
-    private Map<String, String> cleanFileNames(Map<String, String> originalFiles) {
-        Map<String, String> cleanedFiles = new HashMap<>();
+    private Map<String, String> cleanAndProcessFiles(Map<String, String> originalFiles) {
+        Map<String, String> processedFiles = new HashMap<>();
 
         for (Map.Entry<String, String> entry : originalFiles.entrySet()) {
             String originalKey = entry.getKey();
@@ -207,56 +194,42 @@ public class GeminiService {
             // Limpiar la clave: extraer solo el nombre del archivo
             String cleanKey = extractFileName(originalKey);
 
-            log.debug("Cleaning key: '{}' -> '{}'", originalKey, cleanKey);
+            // Procesar el contenido: convertir \\n a saltos de línea reales
+            String cleanContent = unescapeContent(content);
 
-            // Verificar que el contenido no tenga rutas duplicadas en imports o packages
-            String cleanContent = cleanPackageDeclarations(content);
+            log.debug("Processing file: '{}' -> '{}' (content length: {})",
+                    originalKey, cleanKey, cleanContent.length());
 
-            cleanedFiles.put(cleanKey, cleanContent);
+            processedFiles.put(cleanKey, cleanContent);
         }
 
-        return cleanedFiles;
+        return processedFiles;
     }
 
     private String extractFileName(String key) {
         // Si la clave contiene rutas, extraer solo el nombre del archivo
         if (key.contains("/")) {
             String[] parts = key.split("/");
-            return parts[parts.length - 1]; // Tomar la última parte
+            return parts[parts.length - 1];
         }
 
-        // Si contiene backslashes (Windows)
         if (key.contains("\\")) {
             String[] parts = key.split("\\\\");
-            return parts[parts.length - 1]; // Tomar la última parte
+            return parts[parts.length - 1];
         }
 
         return key.trim();
     }
 
-    private String cleanPackageDeclarations(String content) {
-        // Asegurar que el package sea correcto
-        if (content.contains("package ")) {
-            // Buscar líneas de package duplicadas o incorrectas
-            String[] lines = content.split("\\n");
-            StringBuilder cleanContent = new StringBuilder();
-            boolean packageFound = false;
+    private String unescapeContent(String content) {
+        if (content == null) return "";
 
-            for (String line : lines) {
-                if (line.trim().startsWith("package ")) {
-                    if (!packageFound && line.contains("com.example.project")) {
-                        cleanContent.append(line).append("\\n");
-                        packageFound = true;
-                    }
-                    // Ignorar packages duplicados o incorrectos
-                } else {
-                    cleanContent.append(line).append("\\n");
-                }
-            }
-
-            return cleanContent.toString();
-        }
-
-        return content;
+        return content
+                .replace("\\n", "\n")           // Saltos de línea
+                .replace("\\t", "\t")           // Tabs
+                .replace("\\r", "\r")           // Retorno de carro
+                .replace("\\\"", "\"")          // Comillas dobles
+                .replace("\\'", "'")            // Comillas simples
+                .replace("\\\\", "\\");         // Backslashes (debe ir al final)
     }
 }
