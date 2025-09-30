@@ -56,6 +56,7 @@ public class SecurityConfig {
                         .requestMatchers( "/api/roles/**").permitAll()
                         .requestMatchers("/api/generator").permitAll()
                         .requestMatchers("/api/generator/v1").permitAll()
+                        .requestMatchers("/api/ai-assistant/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilter(jwtAuthFilter)

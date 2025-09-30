@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.schemaflow.shared.domain.dto.gemini.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.HashMap;
 import java.util.List;
@@ -25,9 +27,18 @@ public class GeminiService {
     @Value("${api.gemini.key}")
     private String apiKey;
 
+    @Value("${api.gemini.model")
+    private String model;
+
     private final ERDParserService erdParserService;
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final WebClient webClient = WebClient.builder().build();
+
+//    public GeminiService(WebClient.Builder webClientBuilder, ObjectMapper objectMapper) {
+//        this.webClient = webClientBuilder.build();
+//        this.objectMapper = objectMapper;
+//    }
 
     public Map<String, String> generateCode(String erdJson) {
         try {
@@ -231,5 +242,67 @@ public class GeminiService {
                 .replace("\\\"", "\"")          // Comillas dobles
                 .replace("\\'", "'")            // Comillas simples
                 .replace("\\\\", "\\");         // Backslashes (debe ir al final)
+    }
+
+    public String generateContent(String prompt) {
+        try {
+            String endpoint = apiUrl + "?key=" + apiKey;
+
+            GeminiRequest request = GeminiRequest.builder()
+                    .contents(new GeminiContent[]{
+                            GeminiContent.builder()
+                                    .parts(new GeminiPart[]{
+                                            GeminiPart.builder()
+                                                    .text(prompt)
+                                                    .build()
+                                    })
+                                    .build()
+                    })
+                    .generationConfig(GeminiGenerationConfig.builder()
+                            .temperature(0.7)
+                            .topK(40)
+                            .topP(0.95)
+                            .maxOutputTokens(2048)
+                            .build())
+                    .build();
+
+            GeminiResponse response = webClient.post()
+                    .uri(endpoint)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(GeminiResponse.class)
+                    .block();
+
+            if (response != null && response.getCandidates() != null
+                && response.getCandidates().length > 0) {
+                return response.getCandidates()[0]
+                        .getContent()
+                        .getParts()[0]
+                        .getText();
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("Error calling Gemini API", e);
+            throw new RuntimeException("Failed to call Gemini API: " + e.getMessage(), e);
+        }
+    }
+
+    public String generateContentWithHistory(String systemPrompt, String userMessage,
+                                             List<ChatMessage> history) {
+        StringBuilder promptBuilder = new StringBuilder();
+        promptBuilder.append("Instrucciones del sistema: ").append(systemPrompt).append("\n\n");
+
+        // Agregar historial
+        for (ChatMessage msg : history) {
+            promptBuilder.append(msg.getRole()).append(": ")
+                    .append(msg.getContent()).append("\n");
+        }
+
+        // Agregar mensaje actual
+        promptBuilder.append("user: ").append(userMessage).append("\n");
+        promptBuilder.append("assistant: ");
+
+        return generateContent(promptBuilder.toString());
     }
 }
