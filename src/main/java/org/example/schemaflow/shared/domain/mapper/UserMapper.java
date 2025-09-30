@@ -20,7 +20,7 @@ public interface UserMapper {
         if (roles == null || roles.isEmpty()) {
             return null;
         }
-        return roles.getFirst().getName().name();
+        return roles.get(0).getName().name();
     }
 
     List<UserDTO> toDtoList(List<User> users);
