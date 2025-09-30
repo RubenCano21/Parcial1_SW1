@@ -22,9 +22,8 @@ import java.util.Map;
 @Slf4j
 @CrossOrigin(origins = {
         "http://localhost:3000",
-        "http://localhost:3001",
         "http://127.0.0.1:3000",
-        "https://your-frontend-domain.com"
+        "https://sw1-er-diagram-front.onrender.com"
 }, maxAge = 3600)
 public class GeneratorController {
 

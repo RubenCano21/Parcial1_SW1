@@ -16,7 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@CrossOrigin(origins="http://localhost:3000", originPatterns = "*")
+@CrossOrigin(origins="https://sw1-er-diagram-front.onrender.com", originPatterns = "*")
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
