@@ -110,9 +110,10 @@ public class FileWriterService {
         addFileToZip(zos, "pom.xml", generatePomXml(projectName));
         addFileToZip(zos, ".gitignore", generateGitignore());
         addFileToZip(zos, "README.md", generateReadme(projectName));
+        addFileToZip(zos, ".env", generateEnv());
 
         // Application.yml en resources
-        addFileToZip(zos, RESOURCES_BASE + "/application.yml", generateApplicationYml(projectName));
+        addFileToZip(zos, RESOURCES_BASE + "/application.properties", generateApplicationProperties(projectName));
 
         // Clase principal (RUTA FIJA - SIN CONCATENACIÓN)
         String mainClassPath = JAVA_BASE + "/" + PACKAGE_PATH + "/Application.java";
@@ -240,24 +241,21 @@ public class FileWriterService {
             """.formatted(projectName);
     }
 
-    private String generateApplicationYml(String projectName) {
+    private String generateEnv(){
         return """
-            server:
-              port: 8080
-            
-            spring:
-              application:
-                name: %s
-              datasource:
-                url: jdbc:h2:mem:testdb
-                driver-class-name: org.h2.Driver
-              jpa:
-                hibernate:
-                  ddl-auto: create-drop
-                show-sql: true
-              h2:
-                console:
-                  enabled: true
+            SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/diagramador
+            SPRING_DATASOURCE_USERNAME=postgres
+            SPRING_DATASOURCE_PASSWORD=6784
+            SPRING_JPA_HIBERNATE_DDL_AUTO=update
+            """;
+    }
+
+    private String generateApplicationProperties(String projectName) {
+        return """
+                spring.datasource.url=jdbc:postgresql://localhost:5432/diagramador
+                spring.datasource.username=postgres
+                spring.datasource.password=6784
+                spring.jpa.hibernate.ddl-auto=update
             """.formatted(projectName);
     }
 
